@@ -49,6 +49,10 @@ export class LambdaProxyTransport extends Transports.BaseTransport {
           } else {
             let httpResponse: LambdaHTTPResponse;
             try {
+              if (!lambdaResponseData.Payload) {
+                throw new SentryError("Lambda response payload is empty!");
+              }
+
               httpResponse = JSON.parse(lambdaResponseData.Payload.toString());
             } catch (error) {
               reject(
@@ -112,6 +116,12 @@ export class LambdaProxyTransport extends Transports.BaseTransport {
   }
 
   protected _getLambdaParams(payload: any) {
+    if (!process.env.LAMBDA_FUNCTION_NAME) {
+      throw new SentryError(
+        "No lambda function specified via environment variable LAMBDA_FUNCTION_NAME"
+      );
+    }
+
     return {
       FunctionName: process.env.LAMBDA_FUNCTION_NAME,
       InvocationType: "RequestResponse",
