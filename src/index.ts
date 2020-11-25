@@ -2,7 +2,8 @@ import { Event, Response, Status } from "@sentry/types";
 import { eventToSentryRequest } from "@sentry/core";
 import { SentryError, parseRetryAfterHeader, logger } from "@sentry/utils";
 import { Transports } from "@sentry/node";
-import * as url from "url";
+import { LambdaHTTPRequest, LambdaHTTPResponse } from "./types";
+import * as urlTools from "url";
 
 import * as AWS from "aws-sdk";
 
@@ -36,24 +37,29 @@ export class LambdaProxyTransport extends Transports.BaseTransport {
     return this._buffer.add(
       new Promise<Response>((resolve, reject) => {
         const sentryReq = eventToSentryRequest(event, this._api);
-        const options = this._getRequestOptions(new url.URL(sentryReq.url));
+        const requestConfig = this._getLambdaHTTPRequest(
+          sentryReq.url,
+          sentryReq.body
+        );
+        const lambdaParams = this._getLambdaParams(requestConfig);
 
-        var params = {
-          FunctionName: "Lambda_B", // the lambda function we are going to invoke
-          InvocationType: "RequestResponse",
-          LogType: "Tail",
-          Payload: '{ "name" : "Alex" }',
-        };
-
-        this.lambda.invoke(params, (error, lambdaResponseData) => {
+        this.lambda.invoke(lambdaParams, (error, lambdaResponseData) => {
           if (error) {
             reject(error);
           } else {
-            const httpResponse = JSON.parse(
-              lambdaResponseData.Payload.toString() || "{}"
-            ); // TODO: add type (Axios response)
+            let httpResponse: LambdaHTTPResponse;
+            try {
+              httpResponse = JSON.parse(lambdaResponseData.Payload.toString());
+            } catch (error) {
+              reject(
+                new SentryError(
+                  `Failed to parse HTTP response '${lambdaResponseData.Payload}' from Lambda: ${error.message}`
+                )
+              );
+              return;
+            }
 
-            const statusCode = httpResponse.statusCode || 500;
+            const statusCode = httpResponse.status || 500;
             const status = Status.fromHttpCode(statusCode);
 
             if (status === Status.Success) {
@@ -87,5 +93,30 @@ export class LambdaProxyTransport extends Transports.BaseTransport {
         });
       })
     );
+  }
+
+  protected _getLambdaHTTPRequest(
+    url: string,
+    jsonBody: string
+  ): LambdaHTTPRequest {
+    const { headers } = super._getRequestOptions(new urlTools.URL(url));
+
+    return {
+      url,
+      method: "POST",
+      headers,
+      data: JSON.parse(jsonBody),
+      timeout: 2000,
+      responseType: "json",
+    };
+  }
+
+  protected _getLambdaParams(payload: any) {
+    return {
+      FunctionName: process.env.LAMBDA_FUNCTION_NAME,
+      InvocationType: "RequestResponse",
+      LogType: process.env.LAMBDA_LOG_TYPE || "Tail",
+      Payload: JSON.stringify(payload),
+    };
   }
 }
