@@ -1,6 +1,6 @@
 {
   "name": "sentry-lambda-proxy-transport",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "Drop-in replacement for Sentry's default HTTP transport to send events via AWS Lambda proxy instead",
   "main": "dist/index.js",
   "module": "esm/index.js",

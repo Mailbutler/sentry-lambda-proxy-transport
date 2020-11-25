@@ -1,8 +1,7 @@
 import { TransportOptions } from "@sentry/types";
 import { SentryError } from "@sentry/utils";
-import * as HttpsProxyAgent from "https-proxy-agent";
 
-import { HTTPSTransport } from "../../src/transports/https";
+import { LambdaProxyTransport } from "../src";
 
 const mockSetEncoding = jest.fn();
 const dsn =
@@ -17,8 +16,8 @@ jest.mock("fs", () => ({
   },
 }));
 
-function createTransport(options: TransportOptions): HTTPSTransport {
-  const transport = new HTTPSTransport(options);
+function createTransport(options: TransportOptions): LambdaProxyTransport {
+  const transport = new LambdaProxyTransport(options);
   transport.module = {
     request: jest.fn().mockImplementation((_options: any, callback: any) => ({
       end: () => {
@@ -43,7 +42,7 @@ function assertBasicOptions(options: any): void {
   expect(options.hostname).toEqual("sentry.io");
 }
 
-describe("HTTPSTransport", () => {
+describe("LambdaProxyTransport", () => {
   beforeEach(() => {
     mockReturnCode = 200;
     mockHeaders = {};
@@ -162,44 +161,5 @@ describe("HTTPSTransport", () => {
       .calls[0][0];
     assertBasicOptions(requestOptions);
     expect(requestOptions.headers).toEqual(expect.objectContaining({ a: "b" }));
-  });
-
-  test("https proxy", async () => {
-    mockReturnCode = 200;
-    const transport = createTransport({
-      dsn,
-      httpsProxy: "https://example.com:8080",
-    });
-    await transport.sendEvent({
-      message: "test",
-    });
-
-    const requestOptions = (transport.module!.request as jest.Mock).mock
-      .calls[0][0];
-    assertBasicOptions(requestOptions);
-    expect(requestOptions.agent).toBeInstanceOf(HttpsProxyAgent);
-    expect(requestOptions.agent.secureProxy).toEqual(true);
-    expect(requestOptions.agent.proxy).toEqual(
-      expect.objectContaining({
-        protocol: "https:",
-        port: 8080,
-        host: "example.com",
-      })
-    );
-  });
-
-  test("tls certificate", async () => {
-    mockReturnCode = 200;
-    const transport = createTransport({
-      caCerts: "./some/path.pem",
-      dsn,
-    });
-    await transport.sendEvent({
-      message: "test",
-    });
-    const requestOptions = (transport.module!.request as jest.Mock).mock
-      .calls[0][0];
-    assertBasicOptions(requestOptions);
-    expect(requestOptions.ca).toEqual("mockedCert");
   });
 });
