@@ -17,7 +17,7 @@ export class LambdaProxyTransport extends Transports.BaseTransport {
    * @inheritDoc
    */
   public sendEvent(event: Event): PromiseLike<Response> {
-    logger.log("sending event ...");
+    console.log("sending event ...");
 
     if (new Date(Date.now()) < this._disabledUntilLambda) {
       return Promise.reject(
@@ -34,7 +34,7 @@ export class LambdaProxyTransport extends Transports.BaseTransport {
     }
 
     const requestProcessor = async (): Promise<Response> => {
-      logger.log("processing event ...");
+      console.log("processing event ...");
 
       const sentryReq = eventToSentryRequest(event, this._api);
       const requestConfig = this._getLambdaHTTPRequest(
@@ -42,13 +42,13 @@ export class LambdaProxyTransport extends Transports.BaseTransport {
         sentryReq.body
       );
 
-      logger.log("sending request via Lambda ...");
+      console.log("sending request via Lambda ...");
       const httpResponse = await lambdaProxyRequest(requestConfig);
 
       const statusCode = httpResponse.status || 500;
       const status = Status.fromHttpCode(statusCode);
 
-      logger.log("processing response ...");
+      console.log("processing response ...");
 
       if (status === Status.Success) {
         return { status };
