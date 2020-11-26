@@ -38,14 +38,10 @@ export class LambdaProxyTransport extends Transports.BaseTransport {
         sentryReq.body
       );
 
-      console.log(`sending request: ${JSON.stringify(requestConfig)}`);
-
       const httpResponse = await lambdaProxyRequest(requestConfig);
 
       const statusCode = httpResponse.status || 500;
       const status = Status.fromHttpCode(statusCode);
-
-      console.log(`processing response: ${JSON.stringify(httpResponse)}`);
 
       if (status === Status.Success) {
         return { status };
