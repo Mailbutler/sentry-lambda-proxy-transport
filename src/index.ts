@@ -77,10 +77,14 @@ export class LambdaProxyTransport extends Transports.BaseTransport {
   }
 
   protected _getLambdaHTTPRequest(
-    url: string,
+    fullUrl: string,
     jsonBody: string
   ): LambdaHTTPRequest {
-    const { headers } = super._getRequestOptions(new urlTools.URL(url));
+    const { headers } = super._getRequestOptions(new urlTools.URL(fullUrl));
+
+    // we strip the query parameters from the URL to avoid double authentication
+    // as the key is already in the headers now
+    const url = fullUrl.split("?")[0];
 
     return {
       url,
