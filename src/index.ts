@@ -1,7 +1,7 @@
 import { Event, Response, Status } from "@sentry/types";
 import { eventToSentryRequest } from "@sentry/core";
 import { SentryError, parseRetryAfterHeader, logger } from "@sentry/utils";
-import { Transports } from "@sentry/node";
+import { BaseTransport } from "@sentry/node/dist/transports/base";
 import {
   lambdaProxyRequest,
   LambdaHTTPRequest,
@@ -9,7 +9,7 @@ import {
 import * as urlTools from "url";
 
 /** AWS Lambda module transport */
-export class LambdaProxyTransport extends Transports.BaseTransport {
+export class LambdaProxyTransport extends BaseTransport {
   /** Locks transport after receiving 429 response */
   private _disabledUntilLambda: Date = new Date(Date.now());
 
