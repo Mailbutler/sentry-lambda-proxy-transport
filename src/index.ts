@@ -1,94 +1,88 @@
-import { Event, Response, Status } from "@sentry/types";
-import { eventToSentryRequest } from "@sentry/core";
-import { SentryError, parseRetryAfterHeader, logger } from "@sentry/utils";
-import { BaseTransport } from "@sentry/node/dist/transports/base";
 import {
   lambdaProxyRequest,
   LambdaHTTPRequest,
 } from "@mailbutler/lambda-http-proxy";
-import * as urlTools from "url";
+import type {
+  BaseTransportOptions,
+  Transport,
+  TransportMakeRequestResponse,
+  TransportRequest,
+  TransportRequestExecutor,
+} from "@sentry/types";
+import { createTransport } from "@sentry/core";
+import { Readable } from "stream";
+import { createGzip } from "zlib";
 
-/** AWS Lambda module transport */
-export class LambdaProxyTransport extends BaseTransport {
-  /** Locks transport after receiving 429 response */
-  private _disabledUntilLambda: Date = new Date(Date.now());
+export interface LambdaProxyTransportOptions extends BaseTransportOptions {
+  /** Define AWS Lambda proxy function name. Can also be defined via environment variable `LAMBDA_FUNCTION_NAME` */
+  lambdaFunctionName?: string;
+  /** Define custom headers */
+  headers?: Record<string, string>;
+  /** Define request timeout */
+  timeout?: number;
+}
 
-  /**
-   * @inheritDoc
-   */
-  public sendEvent(event: Event): PromiseLike<Response> {
-    if (new Date(Date.now()) < this._disabledUntilLambda) {
-      return Promise.reject(
-        new SentryError(
-          `Transport locked till ${this._disabledUntilLambda} due to too many requests.`
-        )
-      );
-    }
+export function createLambdaProxyTransport(
+  options: LambdaProxyTransportOptions
+): Transport {
+  return createTransport(options, createLambdaProxyRequestExecutor(options));
+}
 
-    if (!this._buffer.isReady()) {
-      return Promise.reject(
-        new SentryError("Not adding Promise due to buffer limit reached.")
-      );
-    }
+// Estimated maximum size for reasonable standalone event
+const GZIP_THRESHOLD = 1024 * 32;
 
-    const requestProcessor = async (): Promise<Response> => {
-      const sentryReq = eventToSentryRequest(event, this._api);
-      const requestConfig = this._getLambdaHTTPRequest(
-        sentryReq.url,
-        sentryReq.body
-      );
+function createLambdaProxyRequestExecutor(
+  options: LambdaProxyTransportOptions
+): TransportRequestExecutor {
+  return async function makeRequest(
+    request: TransportRequest
+  ): Promise<TransportMakeRequestResponse> {
+    try {
+      const headers: Record<string, string> = { ...options.headers };
+
+      let body = Readable.from(request.body);
+      if (request.body.length > GZIP_THRESHOLD) {
+        headers["content-encoding"] = "gzip";
+        body = body.pipe(createGzip());
+      }
+      const data = await _streamToString(body);
+
+      const requestConfig: LambdaHTTPRequest = {
+        ...options,
+        headers,
+        data,
+        method: "POST",
+        responseType: "json",
+      };
 
       const httpResponse = await lambdaProxyRequest(requestConfig);
 
-      const statusCode = httpResponse.status || 500;
-      const status = Status.fromHttpCode(statusCode);
+      // "Key-value pairs of header names and values. Header names are lower-cased."
+      // https://nodejs.org/api/http.html#http_message_headers
+      const retryAfterHeader = httpResponse.headers["retry-after"] ?? null;
+      const rateLimitsHeader =
+        httpResponse.headers["x-sentry-rate-limits"] ?? null;
 
-      if (status === Status.Success) {
-        return { status };
-      } else {
-        if (status === Status.RateLimit) {
-          const now = Date.now();
-          let header = httpResponse.headers
-            ? httpResponse.headers["Retry-After"]
-            : "";
-          header = Array.isArray(header) ? header[0] : header;
-          this._disabledUntilLambda = new Date(
-            now + parseRetryAfterHeader(now, header)
-          );
-          logger.warn(
-            `Too many requests, backing off till: ${this._disabledUntilLambda}`
-          );
-        }
+      return {
+        statusCode: httpResponse.status,
+        headers: {
+          "retry-after": retryAfterHeader,
+          "x-sentry-rate-limits": Array.isArray(rateLimitsHeader)
+            ? rateLimitsHeader[0]
+            : rateLimitsHeader,
+        },
+      };
+    } catch (error) {
+      throw error;
+    }
+  };
+}
 
-        let rejectionMessage = `HTTP Error (${statusCode})`;
-        if (httpResponse.headers && httpResponse.headers["x-sentry-error"]) {
-          rejectionMessage += `: ${httpResponse.headers["x-sentry-error"]}`;
-        }
-
-        throw new SentryError(rejectionMessage);
-      }
-    };
-
-    return this._buffer.add(requestProcessor());
-  }
-
-  protected _getLambdaHTTPRequest(
-    fullUrl: string,
-    jsonBody: string
-  ): LambdaHTTPRequest {
-    const { headers } = super._getRequestOptions(new urlTools.URL(fullUrl));
-
-    // we strip the query parameters from the URL to avoid double authentication
-    // as the key is already in the headers now
-    const url = fullUrl.split("?")[0];
-
-    return {
-      url,
-      method: "POST",
-      headers,
-      data: JSON.parse(jsonBody),
-      timeout: 2000,
-      responseType: "json",
-    };
-  }
+function _streamToString(stream: Readable): Promise<string> {
+  const chunks: Uint8Array[] = [];
+  return new Promise((resolve, reject) => {
+    stream.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    stream.on("error", (err) => reject(err));
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+  });
 }
