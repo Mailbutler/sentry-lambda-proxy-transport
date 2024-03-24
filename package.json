@@ -1,6 +1,6 @@
 {
   "name": "@mailbutler/sentry-lambda-proxy-transport",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Drop-in replacement for Sentry's default HTTP transport to send events via AWS Lambda proxy instead",
   "main": "dist/index.js",
   "module": "esm/index.js",
@@ -28,7 +28,7 @@
     "build:watch": "run-p build:watch:es5 build:watch:esm",
     "build:watch:es5": "tsc -p tsconfig.build.json -w --preserveWatchOutput",
     "build:watch:esm": "tsc -p tsconfig.esm.json -w --preserveWatchOutput",
-    "clean": "rimraf dist coverage",
+    "clean": "rimraf dist coverage esm",
     "link:yarn": "yarn link",
     "lint": "run-s lint:prettier lint:tslint",
     "lint:prettier": "prettier-check \"{src,test}/**/*.ts\"",
