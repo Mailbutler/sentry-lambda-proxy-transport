@@ -9,7 +9,7 @@ import type {
   TransportRequest,
   TransportRequestExecutor,
 } from "@sentry/types";
-import { createTransport } from "@sentry/core";
+import { createTransport, addBreadcrumb } from "@sentry/core";
 import { Readable } from "stream";
 import { createGzip } from "zlib";
 
@@ -56,6 +56,11 @@ function createLambdaProxyRequestExecutor(
       };
 
       const httpResponse = await lambdaProxyRequest(requestConfig);
+      addBreadcrumb({
+        type: "http",
+        category: "http",
+        data: { request: requestConfig, response: httpResponse },
+      });
 
       // "Key-value pairs of header names and values. Header names are lower-cased."
       // https://nodejs.org/api/http.html#http_message_headers
