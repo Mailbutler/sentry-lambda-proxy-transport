@@ -1,6 +1,6 @@
 {
   "name": "@mailbutler/sentry-lambda-proxy-transport",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Drop-in replacement for Sentry's default HTTP transport to send events via AWS Lambda proxy instead",
   "main": "dist/index.js",
   "module": "esm/index.js",
@@ -78,6 +78,7 @@
     "typescript": "^5.4.3"
   },
   "dependencies": {
-    "@mailbutler/lambda-http-proxy": "^1.1.2"
+    "@mailbutler/lambda-http-proxy": "^1.1.2",
+    "tslib": "^2.6.2"
   }
 }
