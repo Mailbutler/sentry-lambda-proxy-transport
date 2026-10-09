@@ -2,14 +2,14 @@ import {
   lambdaProxyRequest,
   LambdaHTTPRequest,
 } from "@mailbutler/lambda-http-proxy";
+import { createTransport } from "@sentry/core";
 import type {
   BaseTransportOptions,
   Transport,
   TransportMakeRequestResponse,
   TransportRequest,
   TransportRequestExecutor,
-} from "@sentry/types";
-import { createTransport } from "@sentry/core";
+} from "@sentry/core";
 import { promisify } from "util";
 import { gzip } from "zlib";
 
