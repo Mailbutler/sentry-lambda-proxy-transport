@@ -1,165 +1,142 @@
-import { TransportOptions } from "@sentry/types";
-import { SentryError } from "@sentry/utils";
+import { lambdaProxyRequest } from "@mailbutler/lambda-http-proxy";
+import type { Envelope } from "@sentry/types";
+import {
+  createAttachmentEnvelopeItem,
+  createEnvelope,
+  serializeEnvelope,
+} from "@sentry/utils";
+import { gunzipSync } from "zlib";
 
-import { LambdaProxyTransport } from "../src";
+import { createLambdaProxyTransport } from "../src";
 
-const mockSetEncoding = jest.fn();
-const dsn =
-  "https://9e9fd4523d784609a5fc0ebb1080592f@sentry.io:8989/mysubpath/50622";
-const transportPath = "/mysubpath/api/50622/store/";
-let mockReturnCode = 200;
-let mockHeaders = {};
-
-jest.mock("fs", () => ({
-  readFileSync(): string {
-    return "mockedCert";
-  },
+jest.mock("@mailbutler/lambda-http-proxy", () => ({
+  lambdaProxyRequest: jest.fn(),
 }));
 
-function createTransport(options: TransportOptions): LambdaProxyTransport {
-  const transport = new LambdaProxyTransport(options);
-  transport.module = {
-    request: jest.fn().mockImplementation((_options: any, callback: any) => ({
-      end: () => {
-        callback({
-          headers: mockHeaders,
-          setEncoding: mockSetEncoding,
-          statusCode: mockReturnCode,
-        });
-      },
-      on: jest.fn(),
-    })),
-  };
-  return transport;
+const mockedRequest = lambdaProxyRequest as jest.MockedFunction<
+  typeof lambdaProxyRequest
+>;
+
+const url =
+  "https://o1.ingest.sentry.io/api/2/envelope/?sentry_key=abc&sentry_version=7";
+
+function eventEnvelope(message: string): Envelope {
+  return createEnvelope<Envelope>(
+    { event_id: "aa3ff046696b4bc6b609ce6d28fde9e2" },
+    [
+      [
+        { type: "event" },
+        { event_id: "aa3ff046696b4bc6b609ce6d28fde9e2", message },
+      ],
+    ] as any,
+  );
 }
 
-function assertBasicOptions(options: any): void {
-  expect(options.headers["X-Sentry-Auth"]).toContain("sentry_version");
-  expect(options.headers["X-Sentry-Auth"]).toContain("sentry_client");
-  expect(options.headers["X-Sentry-Auth"]).toContain("sentry_key");
-  expect(options.port).toEqual("8989");
-  expect(options.path).toEqual(transportPath);
-  expect(options.hostname).toEqual("sentry.io");
+function transport(options: Record<string, unknown> = {}) {
+  return createLambdaProxyTransport({
+    url,
+    recordDroppedEvent: jest.fn(),
+    lambdaFunctionName: "lambda-http-proxy",
+    ...options,
+  } as any);
 }
 
-describe("LambdaProxyTransport", () => {
-  beforeEach(() => {
-    mockReturnCode = 200;
-    mockHeaders = {};
-    jest.clearAllMocks();
+function sentRequest(): any {
+  expect(mockedRequest).toHaveBeenCalledTimes(1);
+  return mockedRequest.mock.calls[0][0];
+}
+
+beforeEach(() => {
+  mockedRequest.mockReset();
+  mockedRequest.mockResolvedValue({
+    status: 200,
+    statusText: "OK",
+    data: {},
+    headers: {},
+    config: {},
   });
+});
 
-  test("send 200", async () => {
-    const transport = createTransport({ dsn });
-    await transport.sendEvent({
-      message: "test",
-    });
+test("small event: envelope is sent as string, uncompressed", async () => {
+  const envelope = eventEnvelope("hello äöü €");
 
-    const requestOptions = (transport.module!.request as jest.Mock).mock
-      .calls[0][0];
-    assertBasicOptions(requestOptions);
-    expect(mockSetEncoding).toHaveBeenCalled();
+  await transport().send(envelope);
+
+  const request = sentRequest();
+  expect(request.data).toBe(serializeEnvelope(envelope));
+  expect(request.dataEncoding).toBeUndefined();
+  expect(request.headers["content-encoding"]).toBeUndefined();
+  expect(request).toMatchObject({
+    url,
+    method: "POST",
+    lambdaFunctionName: "lambda-http-proxy",
   });
+});
 
-  test("send 400", async () => {
-    mockReturnCode = 400;
-    const transport = createTransport({ dsn });
+test("large event (> 32 KB): gzipped bytes survive as base64", async () => {
+  const envelope = eventEnvelope("x".repeat(40 * 1024) + " äöü €");
 
-    try {
-      await transport.sendEvent({
-        message: "test",
-      });
-    } catch (e) {
-      const requestOptions = (transport.module!.request as jest.Mock).mock
-        .calls[0][0];
-      assertBasicOptions(requestOptions);
-      expect(e).toEqual(new SentryError(`HTTP Error (${mockReturnCode})`));
-    }
+  await transport().send(envelope);
+
+  const request = sentRequest();
+  expect(request.headers["content-encoding"]).toBe("gzip");
+  expect(request.dataEncoding).toBe("base64");
+  expect(typeof request.data).toBe("string");
+  const body = gunzipSync(Buffer.from(request.data, "base64")).toString("utf8");
+  expect(body).toBe(serializeEnvelope(envelope));
+});
+
+test("binary envelope (attachment): bytes survive as base64", async () => {
+  const attachment = new Uint8Array([0, 255, 128, 10, 0xc3, 0x28]);
+  const envelope = createEnvelope<Envelope>({ event_id: "abc" }, [
+    createAttachmentEnvelopeItem({ data: attachment, filename: "a.bin" }),
+  ]);
+  const serialized = serializeEnvelope(envelope) as Uint8Array;
+  expect(serialized).toBeInstanceOf(Uint8Array);
+
+  await transport().send(envelope);
+
+  const request = sentRequest();
+  expect(request.dataEncoding).toBe("base64");
+  expect(request.headers["content-encoding"]).toBeUndefined();
+  expect(
+    Buffer.from(request.data, "base64").equals(Buffer.from(serialized)),
+  ).toBe(true);
+});
+
+test("custom headers and timeout are forwarded, SDK options are not", async () => {
+  await transport({
+    headers: { a: "b" },
+    timeout: 1234,
+    proxy: "http://localhost:3128",
+    caCerts: "cert",
+  }).send(eventEnvelope("hello"));
+
+  const request = sentRequest();
+  expect(request.headers).toEqual(expect.objectContaining({ a: "b" }));
+  expect(request.timeout).toBe(1234);
+  expect(request).not.toHaveProperty("proxy");
+  expect(request).not.toHaveProperty("caCerts");
+  expect(request).not.toHaveProperty("recordDroppedEvent");
+});
+
+test("passes status and rate limit headers back to the SDK", async () => {
+  mockedRequest.mockResolvedValue({
+    status: 429,
+    statusText: "Too Many Requests",
+    data: {},
+    headers: { "retry-after": "60", "x-sentry-rate-limits": "60:error:key" },
+    config: {},
   });
+  const t = transport();
 
-  test("send x-sentry-error header", async () => {
-    mockReturnCode = 429;
-    mockHeaders = {
-      "x-sentry-error": "test-failed",
-    };
-    const transport = createTransport({ dsn });
+  const response = await t.send(eventEnvelope("first"));
+  await t.send(eventEnvelope("second"));
 
-    try {
-      await transport.sendEvent({
-        message: "test",
-      });
-    } catch (e) {
-      const requestOptions = (transport.module!.request as jest.Mock).mock
-        .calls[0][0];
-      assertBasicOptions(requestOptions);
-      expect(e).toEqual(
-        new SentryError(`HTTP Error (${mockReturnCode}): test-failed`)
-      );
-    }
+  expect(response).toEqual({
+    statusCode: 429,
+    headers: { "retry-after": "60", "x-sentry-rate-limits": "60:error:key" },
   });
-
-  test("back-off using Retry-After header", async () => {
-    const retryAfterSeconds = 10;
-    mockReturnCode = 429;
-    mockHeaders = {
-      "Retry-After": retryAfterSeconds,
-    };
-    const transport = createTransport({ dsn });
-
-    const now = Date.now();
-    const mock = jest
-      .spyOn(Date, "now")
-      // Check for first event
-      .mockReturnValueOnce(now)
-      // Setting disabledUntil
-      .mockReturnValueOnce(now)
-      // Check for second event
-      .mockReturnValueOnce(now + (retryAfterSeconds / 2) * 1000)
-      // Check for third event
-      .mockReturnValueOnce(now + retryAfterSeconds * 1000);
-
-    try {
-      await transport.sendEvent({ message: "test" });
-    } catch (e) {
-      expect(e).toEqual(new SentryError(`HTTP Error (${mockReturnCode})`));
-    }
-
-    try {
-      await transport.sendEvent({ message: "test" });
-    } catch (e) {
-      expect(e).toEqual(
-        new SentryError(
-          `Transport locked till ${new Date(
-            now + retryAfterSeconds * 1000
-          )} due to too many requests.`
-        )
-      );
-    }
-
-    try {
-      await transport.sendEvent({ message: "test" });
-    } catch (e) {
-      expect(e).toEqual(new SentryError(`HTTP Error (${mockReturnCode})`));
-    }
-
-    mock.mockRestore();
-  });
-
-  test("transport options", async () => {
-    mockReturnCode = 200;
-    const transport = createTransport({
-      dsn,
-      headers: {
-        a: "b",
-      },
-    });
-    await transport.sendEvent({
-      message: "test",
-    });
-
-    const requestOptions = (transport.module!.request as jest.Mock).mock
-      .calls[0][0];
-    assertBasicOptions(requestOptions);
-    expect(requestOptions.headers).toEqual(expect.objectContaining({ a: "b" }));
-  });
+  // second event is dropped by the SDK's rate limiting
+  expect(mockedRequest).toHaveBeenCalledTimes(1);
 });
