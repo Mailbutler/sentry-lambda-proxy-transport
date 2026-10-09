@@ -1,10 +1,10 @@
 import { lambdaProxyRequest } from "@mailbutler/lambda-http-proxy";
-import type { Envelope } from "@sentry/types";
 import {
   createAttachmentEnvelopeItem,
   createEnvelope,
   serializeEnvelope,
-} from "@sentry/utils";
+} from "@sentry/core";
+import type { Envelope } from "@sentry/core";
 import { gunzipSync } from "zlib";
 
 import { createLambdaProxyTransport } from "../src";

@@ -24,7 +24,7 @@ Please follow the instructions for [lambda-http-proxy](https://github.com/mailbu
 After having prepared your AWS environment, you can now import the module into your project, e.g. a Lambda function and initialize your Sentry instance to send events via the Lambda proxy function:
 
 ```js
-import * as Sentry from "@sentry/node"; // Sentry JavaScript SDK v7
+import * as Sentry from "@sentry/node"; // Sentry JavaScript SDK v11 (transport 2.x: SDK v7)
 import { createLambdaProxyTransport } from "@mailbutler/sentry-lambda-proxy-transport";
 
 Sentry.init({
@@ -44,6 +44,9 @@ base64 encoded with `dataEncoding: "base64"` (since 2.2.0); the proxy function m
 
 ## Release History
 
+- 3.0
+  - Sentry JavaScript SDK v11: peer dependency `@sentry/core` ^11 (use 2.x with SDK v7)
+  - Node.js >= 22.12
 - 2.2
   - Fix: gzipped (> 32 KB) and binary envelopes were corrupted (decoded as UTF-8); they are now
     sent base64 encoded with `dataEncoding: "base64"`
