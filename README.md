@@ -12,7 +12,7 @@ This module builds on top of [lambda-http-proxy](https://github.com/mailbutler/l
 ## Installation
 
 ```sh
-npm install sentry-lambda-proxy-transport --save
+npm install @mailbutler/sentry-lambda-proxy-transport
 ```
 
 ## AWS Requirements
@@ -24,18 +24,30 @@ Please follow the instructions for [lambda-http-proxy](https://github.com/mailbu
 After having prepared your AWS environment, you can now import the module into your project, e.g. a Lambda function and initialize your Sentry instance to send events via the Lambda proxy function:
 
 ```js
-import { LambdaProxyTransport } from "@mailbutler/sentry-lambda-proxy-transport";
+import * as Sentry from "@sentry/node"; // Sentry JavaScript SDK v7
+import { createLambdaProxyTransport } from "@mailbutler/sentry-lambda-proxy-transport";
 
 Sentry.init({
   // regular configuration of your Sentry instance, including 'dsn'
 
   // use Lambda proxy transport instead of default HTTP transport
-  transport: LambdaProxyTransport,
+  transport: createLambdaProxyTransport,
+  // optional: function name (default: env LAMBDA_FUNCTION_NAME), headers, timeout
+  transportOptions: { lambdaFunctionName: "lambda-http-proxy" },
 });
 ```
 
+Like `@sentry/node`, envelopes larger than 32 KB are gzipped (`content-encoding: gzip`).
+Binary bodies (gzipped envelopes, envelopes with attachments) are sent to the proxy function
+base64 encoded with `dataEncoding: "base64"` (since 2.2.0); the proxy function must decode them
+(see [lambda-http-proxy](https://github.com/mailbutler/lambda-http-proxy#binary-request-bodies)).
+
 ## Release History
 
+- 2.2
+  - Fix: gzipped (> 32 KB) and binary envelopes were corrupted (decoded as UTF-8); they are now
+    sent base64 encoded with `dataEncoding: "base64"`
+  - ESM build is included in the package
 - 1.0
   - Initial version
 
